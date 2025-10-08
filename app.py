@@ -11,7 +11,6 @@ ST_CLIENT_ID = "cid.jfxfxq48ex4g3rye0efm6tgrb"
 ST_CLIENT_SECRET = "cs1.msccvj18obioj9ou0hvfbqjvl9xpaszo5czh4pigvnzjrj6t8i"
 ST_APP_KEY = "ak1.6epj2e965br72tf00nj1fy2nv"
 ST_TENANT_ID = "1745774105"
-GHL_WEBHOOK_URL = "https://services.leadconnectorhq.com/hooks/0KTaVXOQNdneW5fpD3pX/webhook-trigger/30e92429-22f6-411f-b1a2-a04d8981a5ef"
 
 AUTH_URL = "https://auth.servicetitan.io/connect/token"
 BASE_URL = "https://api.servicetitan.io"
@@ -127,15 +126,6 @@ def fetch_customer_contacts(token: str, customer_id: int) -> Dict[str, Any]:
         "emails": emails,
     }
 
-def send_to_ghl(estimate_data: Dict[str, Any]) -> bool:
-    """Send estimate to GoHighLevel."""
-    try:
-        response = requests.post(GHL_WEBHOOK_URL, json=estimate_data, timeout=10)
-        response.raise_for_status()
-        return True
-    except Exception:
-        return False
-
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
@@ -158,7 +148,6 @@ def sync_estimates():
         # Process estimates
         all_unsold = []
         enriched_count = 0
-        sent_count = 0
 
         for job in jobs:
             job_id = job.get("id")
@@ -204,10 +193,6 @@ def sync_estimates():
 
                     all_unsold.append(estimate_record)
 
-                    # Send to GHL
-                    if send_to_ghl(estimate_record):
-                        sent_count += 1
-
         # Return metrics
         total_value = sum(est.get("total", 0) for est in all_unsold)
 
@@ -218,7 +203,6 @@ def sync_estimates():
                 "unsold_estimates_found": len(all_unsold),
                 "total_value": total_value,
                 "enriched_with_contacts": enriched_count,
-                "sent_to_ghl": sent_count,
                 "days_back": days_back,
             },
             "estimates": all_unsold
