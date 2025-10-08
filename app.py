@@ -158,7 +158,7 @@ def sync_estimates():
 
             # Fetch estimates for this job
             estimates = fetch_estimates(token, job_id)
-            time.sleep(0.1)
+            time.sleep(0.05)  # Reduced delay
 
             for est in estimates:
                 # Filter for unsold (status = 0)
@@ -187,7 +187,7 @@ def sync_estimates():
                             estimate_record["phones"] = contacts["phones"]
                             estimate_record["emails"] = contacts["emails"]
                             enriched_count += 1
-                            time.sleep(0.1)
+                            time.sleep(0.05)  # Reduced delay
                         except Exception:
                             pass
 
