@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 import requests
 import time
-import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
@@ -15,9 +14,6 @@ ST_TENANT_ID = "1745774105"
 
 AUTH_URL = "https://auth.servicetitan.io/connect/token"
 BASE_URL = "https://api.servicetitan.io"
-
-# In-memory storage for async results
-jobs_storage = {}
 
 def get_token() -> str:
     """Get ServiceTitan OAuth token."""
@@ -77,7 +73,7 @@ def fetch_jobs(token: str, days_back: int) -> List[Dict[str, Any]]:
             break
 
         page += 1
-        time.sleep(0.05)
+        time.sleep(0.1)
 
     return all_jobs
 
@@ -130,33 +126,39 @@ def fetch_customer_contacts(token: str, customer_id: int) -> Dict[str, Any]:
         "emails": emails,
     }
 
-def process_sync_job(job_id: str, days_back: int):
-    """Background job to process estimates."""
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint."""
+    return jsonify({"status": "healthy", "service": "servicetitan-api"}), 200
+
+@app.route('/sync', methods=['POST'])
+def sync_estimates():
+    """Main endpoint to sync unsold estimates."""
     try:
-        jobs_storage[job_id] = {"status": "processing", "progress": 0}
+        # Get parameters from request
+        data = request.get_json() or {}
+        days_back = int(data.get('daysBack', 30))
 
         # Get token
         token = get_token()
 
         # Fetch jobs
         jobs = fetch_jobs(token, days_back)
-        jobs_storage[job_id]["total_jobs"] = len(jobs)
 
         # Process estimates
         all_unsold = []
         enriched_count = 0
-        processed = 0
 
         for job in jobs:
-            job_obj_id = job.get("id")
+            job_id = job.get("id")
             customer_id = job.get("customerId")
 
-            if not job_obj_id:
+            if not job_id:
                 continue
 
             # Fetch estimates for this job
-            estimates = fetch_estimates(token, job_obj_id)
-            time.sleep(0.05)
+            estimates = fetch_estimates(token, job_id)
+            time.sleep(0.05)  # Reduced delay
 
             for est in estimates:
                 # Filter for unsold (status = 0)
@@ -167,7 +169,7 @@ def process_sync_job(job_id: str, days_back: int):
 
                     estimate_record = {
                         "estimate_id": est.get("id"),
-                        "job_id": job_obj_id,
+                        "job_id": job_id,
                         "customer_id": customer_id,
                         "name": est.get("name", ""),
                         "total": est.get("total", 0),
@@ -185,22 +187,16 @@ def process_sync_job(job_id: str, days_back: int):
                             estimate_record["phones"] = contacts["phones"]
                             estimate_record["emails"] = contacts["emails"]
                             enriched_count += 1
-                            time.sleep(0.05)
+                            time.sleep(0.05)  # Reduced delay
                         except Exception:
                             pass
 
                     all_unsold.append(estimate_record)
 
-            processed += 1
-            jobs_storage[job_id]["progress"] = int((processed / len(jobs)) * 100)
-
-        # Calculate metrics
+        # Return metrics
         total_value = sum(est.get("total", 0) for est in all_unsold)
 
-        # Store results
-        jobs_storage[job_id] = {
-            "status": "completed",
-            "progress": 100,
+        return jsonify({
             "success": True,
             "metrics": {
                 "jobs_checked": len(jobs),
@@ -210,135 +206,7 @@ def process_sync_job(job_id: str, days_back: int):
                 "days_back": days_back,
             },
             "estimates": all_unsold
-        }
-
-    except Exception as e:
-        jobs_storage[job_id] = {
-            "status": "failed",
-            "success": False,
-            "error": str(e)
-        }
-
-@app.route('/health', methods=['GET'])
-def health():
-    """Health check endpoint."""
-    return jsonify({"status": "healthy", "service": "servicetitan-api"}), 200
-
-@app.route('/sync/start', methods=['POST'])
-def start_sync():
-    """Start async sync job - returns immediately."""
-    try:
-        data = request.get_json() or {}
-        days_back = int(data.get('daysBack', 30))
-
-        # Generate job ID
-        job_id = f"job_{int(time.time())}"
-
-        # Start background thread
-        thread = threading.Thread(target=process_sync_job, args=(job_id, days_back))
-        thread.daemon = True
-        thread.start()
-
-        return jsonify({
-            "success": True,
-            "job_id": job_id,
-            "status": "started",
-            "message": "Job started. Poll /sync/status/{job_id} for results."
-        }), 202
-
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-@app.route('/sync/status/<job_id>', methods=['GET'])
-def get_sync_status(job_id):
-    """Get status of sync job."""
-    if job_id not in jobs_storage:
-        return jsonify({
-            "success": False,
-            "error": "Job not found"
-        }), 404
-
-    return jsonify(jobs_storage[job_id]), 200
-
-@app.route('/sync', methods=['POST'])
-def sync_estimates_legacy():
-    """Legacy sync endpoint - for backwards compatibility, points to async."""
-    try:
-        data = request.get_json() or {}
-        days_back = int(data.get('daysBack', 7))  # Default to 7 days for speed
-
-        # For small requests (< 10 days), process synchronously
-        if days_back <= 10:
-            token = get_token()
-            jobs = fetch_jobs(token, days_back)
-
-            # Quick check if we have few jobs
-            if len(jobs) < 50:
-                # Process inline for speed
-                all_unsold = []
-                enriched_count = 0
-
-                for job in jobs:
-                    job_id = job.get("id")
-                    customer_id = job.get("customerId")
-
-                    if not job_id:
-                        continue
-
-                    estimates = fetch_estimates(token, job_id)
-
-                    for est in estimates:
-                        if est.get('status', {}).get('value') == 0:
-                            created_on = est.get('createdOn', '')
-                            created_date = datetime.fromisoformat(created_on.replace('Z', '+00:00'))
-                            days_old = (datetime.now().astimezone() - created_date).days
-
-                            estimate_record = {
-                                "estimate_id": est.get("id"),
-                                "job_id": job_id,
-                                "customer_id": customer_id,
-                                "name": est.get("name", ""),
-                                "total": est.get("total", 0),
-                                "status": est.get("status", {}).get("name", ""),
-                                "created_on": created_on,
-                                "days_old": days_old,
-                                "phones": [],
-                                "emails": [],
-                            }
-
-                            if customer_id:
-                                try:
-                                    contacts = fetch_customer_contacts(token, customer_id)
-                                    estimate_record["phones"] = contacts["phones"]
-                                    estimate_record["emails"] = contacts["emails"]
-                                    enriched_count += 1
-                                except Exception:
-                                    pass
-
-                            all_unsold.append(estimate_record)
-
-                total_value = sum(est.get("total", 0) for est in all_unsold)
-
-                return jsonify({
-                    "success": True,
-                    "metrics": {
-                        "jobs_checked": len(jobs),
-                        "unsold_estimates_found": len(all_unsold),
-                        "total_value": total_value,
-                        "enriched_with_contacts": enriched_count,
-                        "days_back": days_back,
-                    },
-                    "estimates": all_unsold
-                }), 200
-
-        # For larger requests, use async
-        return jsonify({
-            "success": False,
-            "error": f"Request too large ({days_back} days). Use /sync/start and /sync/status endpoints instead, or reduce to 10 days or less."
-        }), 400
+        }), 200
 
     except Exception as e:
         return jsonify({
@@ -347,6 +215,7 @@ def sync_estimates_legacy():
         }), 500
 
 if __name__ == '__main__':
+    # Railway sets PORT environment variable
     import os
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
