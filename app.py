@@ -14,7 +14,7 @@ ST_TENANT_ID = "1745774105"
 GHL_WEBHOOK_URL = "https://services.leadconnectorhq.com/hooks/0KTaVXOQNdneW5fpD3pX/webhook-trigger/30e92429-22f6-411f-b1a2-a04d8981a5ef"
 
 AUTH_URL = "https://auth.servicetitan.io/connect/token"
-BASE_URL = f"https://api.servicetitan.io/jpm/v2/tenant/{ST_TENANT_ID}"
+BASE_URL = "https://api.servicetitan.io"
 
 def get_token() -> str:
     """Get ServiceTitan OAuth token."""
@@ -53,7 +53,7 @@ def fetch_jobs(token: str, days_back: int) -> List[Dict[str, Any]]:
 
     while True:
         response = requests.get(
-            f"{BASE_URL}/jobs",
+            f"{BASE_URL}/jpm/v2/tenant/{ST_TENANT_ID}/jobs",
             headers=headers,
             params={
                 "createdOnOrAfter": cutoff_date,
@@ -86,7 +86,7 @@ def fetch_estimates(token: str, job_id: int) -> List[Dict[str, Any]]:
     }
 
     response = requests.get(
-        f"{BASE_URL}/estimates",
+        f"{BASE_URL}/sales/v2/tenant/{ST_TENANT_ID}/estimates",
         headers=headers,
         params={"jobId": job_id},
     )
@@ -101,7 +101,7 @@ def fetch_customer_contacts(token: str, customer_id: int) -> Dict[str, Any]:
     }
 
     response = requests.get(
-        f"{BASE_URL}/crm/v2/customers/{customer_id}",
+        f"{BASE_URL}/crm/v2/tenant/{ST_TENANT_ID}/customers/{customer_id}",
         headers=headers,
     )
     response.raise_for_status()
