@@ -137,7 +137,7 @@ def sync_estimates():
     try:
         # Get parameters from request
         data = request.get_json() or {}
-        days_back = data.get('daysBack', 30)
+        days_back = int(data.get('daysBack', 30))
 
         # Get token
         token = get_token()
